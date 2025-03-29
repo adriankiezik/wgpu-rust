@@ -1,14 +1,16 @@
 use std::sync::Arc;
-use wgpu::{DeviceDescriptor, Features, Instance, Limits, MemoryHints, PowerPreference, PresentMode, RequestAdapterOptions};
+use wgpu::{Device, DeviceDescriptor, Features, Instance, Limits, MemoryHints, MultisampleState, PowerPreference, PresentMode, Queue, RequestAdapterOptions};
 use winit::window::Window;
+use crate::TextEngine;
 
 pub struct WgpuState {
     pub surface: wgpu::Surface<'static>,
-    pub device: wgpu::Device,
-    pub queue: wgpu::Queue,
+    pub device: Device,
+    pub queue: Queue,
     pub render_pipeline: wgpu::RenderPipeline,
     pub config: wgpu::SurfaceConfiguration,
     pub current_size: winit::dpi::PhysicalSize<u32>,
+    pub text_engine: TextEngine,
 }
 
 impl WgpuState {
@@ -63,6 +65,8 @@ impl WgpuState {
 
         surface.configure(&device, &config);
 
+        let text_engine = TextEngine::default(&device, &queue, &window);
+
         let shader = device.create_shader_module(wgpu::include_wgsl!("shaders/shader.wgsl"));
 
         let render_pipeline_layout =
@@ -101,7 +105,7 @@ impl WgpuState {
                 conservative: false,
             },
             depth_stencil: None,
-            multisample: wgpu::MultisampleState {
+            multisample: MultisampleState {
                 count: 1,
                 mask: !0,
                 alpha_to_coverage_enabled: false,
@@ -119,6 +123,7 @@ impl WgpuState {
             render_pipeline,
             config,
             current_size: window.inner_size(),
+            text_engine,
         }
     }
 }

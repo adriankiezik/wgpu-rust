@@ -1,16 +1,18 @@
 use std::sync::Arc;
+use glyphon::{Color, Resolution, TextArea, TextBounds};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowAttributes, WindowId};
-use crate::WgpuState;
+use crate::{FrameStats, WgpuState};
 
 enum AppState {
     Uninitialized,
     Initialized {
         window: Arc<Window>,
         wgpu_state: WgpuState,
+        frame_stats: FrameStats,
     },
 }
 
@@ -39,15 +41,51 @@ impl App {
 
         let wgpu_state = WgpuState::default(window.clone());
 
-        self.state = AppState::Initialized { window, wgpu_state };
+        self.state = AppState::Initialized { window, wgpu_state, frame_stats: FrameStats::new(), };
     }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
         if let AppState::Initialized {
             window: _window,
             wgpu_state,
-        } = &self.state
+            frame_stats,
+        } = &mut self.state
         {
+            let text_engine = &mut wgpu_state.text_engine;
+
+            text_engine.viewport.update(
+                &wgpu_state.queue,
+                Resolution {
+                    width: wgpu_state.current_size.width,
+                    height: wgpu_state.current_size.height,
+                },
+            );
+
+            text_engine.text_renderer
+                .prepare(
+                    &wgpu_state.device,
+                    &wgpu_state.queue,
+                    &mut text_engine.font_system,
+                    &mut text_engine.atlas,
+                    &text_engine.viewport,
+                    [TextArea {
+                        buffer: &text_engine.text_buffer,
+                        left: 10.0,
+                        top: 10.0,
+                        scale: 1.0,
+                        bounds: TextBounds {
+                            left: 0,
+                            top: 0,
+                            right: 300,
+                            bottom: 300,
+                        },
+                        default_color: Color::rgb(255, 100, 100),
+                        custom_glyphs: &[],
+                    }],
+                    &mut text_engine.swash_cache,
+                )
+                .unwrap();
+
             let surface_texture = wgpu_state.surface.get_current_texture()?;
 
             let texture_view = surface_texture
@@ -58,7 +96,7 @@ impl App {
                 wgpu_state
                     .device
                     .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("Render Encoder"),
+                        label: Some("Render Pass Encoder"),
                     });
 
             {
@@ -84,12 +122,18 @@ impl App {
 
                 render_pass.set_pipeline(&wgpu_state.render_pipeline);
                 render_pass.draw(0..3, 0..1);
+
+                text_engine.text_renderer.render(&text_engine.atlas, &text_engine.viewport, &mut render_pass).unwrap();
             }
 
             wgpu_state
                 .queue
                 .submit(std::iter::once(command_encoder.finish()));
             surface_texture.present();
+
+            text_engine.atlas.trim();
+
+            frame_stats.update();
         }
 
         Ok(())
