@@ -1,20 +1,21 @@
 use std::sync::Arc;
-use wgpu::{Device, DeviceDescriptor, Features, Instance, Limits, MemoryHints, MultisampleState, PowerPreference, PresentMode, Queue, RequestAdapterOptions};
+use wgpu::{
+    Device, DeviceDescriptor, Features, Instance, Limits, MemoryHints, MultisampleState,
+    PowerPreference, PresentMode, Queue, RequestAdapterOptions,
+};
 use winit::window::Window;
-use crate::TextEngine;
 
-pub struct WgpuState {
+pub struct GpuContext {
     pub surface: wgpu::Surface<'static>,
     pub device: Device,
     pub queue: Queue,
     pub render_pipeline: wgpu::RenderPipeline,
     pub config: wgpu::SurfaceConfiguration,
     pub current_size: winit::dpi::PhysicalSize<u32>,
-    pub text_engine: TextEngine,
 }
 
-impl WgpuState {
-    pub fn default(window: Arc<Window>) -> WgpuState {
+impl GpuContext {
+    pub fn default(window: Arc<Window>) -> Self {
         let instance = Instance::default();
         let surface = instance
             .create_surface(window.clone())
@@ -25,7 +26,9 @@ impl WgpuState {
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
         }))
-            .expect("Failed to retrieve adapter");
+        .expect("Failed to retrieve adapter");
+
+        println!("{:?}", adapter.get_info());
 
         let (device, queue) = pollster::block_on(adapter.request_device(
             &DeviceDescriptor {
@@ -36,7 +39,7 @@ impl WgpuState {
             },
             None,
         ))
-            .expect("Failed to request device");
+        .expect("Failed to request device");
 
         let capabilities = surface.get_capabilities(&adapter);
 
@@ -52,20 +55,13 @@ impl WgpuState {
             format: surface_format,
             width: window.inner_size().width,
             height: window.inner_size().height,
-            present_mode: capabilities
-                .present_modes
-                .iter()
-                .copied()
-                .find(|&mode| mode == PresentMode::Immediate)
-                .unwrap_or(PresentMode::Fifo),
+            present_mode: PresentMode::AutoNoVsync,
             alpha_mode: capabilities.alpha_modes[0],
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };
 
         surface.configure(&device, &config);
-
-        let text_engine = TextEngine::default(&device, &queue, &window);
 
         let shader = device.create_shader_module(wgpu::include_wgsl!("shaders/shader.wgsl"));
 
@@ -123,7 +119,6 @@ impl WgpuState {
             render_pipeline,
             config,
             current_size: window.inner_size(),
-            text_engine,
         }
     }
 }

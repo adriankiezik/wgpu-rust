@@ -1,18 +1,19 @@
+use crate::{FrameStats, GpuContext, TextEngine};
+use glyphon::{Color, Resolution};
 use std::sync::Arc;
-use glyphon::{Color, Resolution, TextArea, TextBounds};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowAttributes, WindowId};
-use crate::{FrameStats, WgpuState};
 
 enum AppState {
     Uninitialized,
     Initialized {
         window: Arc<Window>,
-        wgpu_state: WgpuState,
+        gpu_context: GpuContext,
         frame_stats: FrameStats,
+        text_engine: TextEngine,
     },
 }
 
@@ -39,94 +40,87 @@ impl App {
                 .expect("Failed to create window"),
         );
 
-        let wgpu_state = WgpuState::default(window.clone());
+        let gpu_context = GpuContext::default(window.clone());
+        let text_engine = TextEngine::default(&gpu_context, &window);
 
-        self.state = AppState::Initialized { window, wgpu_state, frame_stats: FrameStats::new(), };
+        self.state = AppState::Initialized {
+            window,
+            gpu_context,
+            frame_stats: FrameStats::new(),
+            text_engine,
+        };
     }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
         if let AppState::Initialized {
             window: _window,
-            wgpu_state,
+            gpu_context,
             frame_stats,
+            text_engine,
         } = &mut self.state
         {
-            let text_engine = &mut wgpu_state.text_engine;
-
             text_engine.viewport.update(
-                &wgpu_state.queue,
+                &gpu_context.queue,
                 Resolution {
-                    width: wgpu_state.current_size.width,
-                    height: wgpu_state.current_size.height,
+                    width: gpu_context.current_size.width,
+                    height: gpu_context.current_size.height,
                 },
             );
 
-            text_engine.text_renderer
-                .prepare(
-                    &wgpu_state.device,
-                    &wgpu_state.queue,
-                    &mut text_engine.font_system,
-                    &mut text_engine.atlas,
-                    &text_engine.viewport,
-                    [TextArea {
-                        buffer: &text_engine.text_buffer,
-                        left: 10.0,
-                        top: 10.0,
-                        scale: 1.0,
-                        bounds: TextBounds {
-                            left: 0,
-                            top: 0,
-                            right: 300,
-                            bottom: 300,
-                        },
-                        default_color: Color::rgb(255, 100, 100),
-                        custom_glyphs: &[],
-                    }],
-                    &mut text_engine.swash_cache,
-                )
-                .unwrap();
+            text_engine.draw_text(
+                &gpu_context,
+                &*format!("{:.0} fps", frame_stats.fps).to_string(),
+                15.0,
+                0.0,
+                20.0,
+                Color::rgb(100, 255, 100),
+            );
 
-            let surface_texture = wgpu_state.surface.get_current_texture()?;
+            let surface_texture = gpu_context.surface.get_current_texture()?;
 
             let texture_view = surface_texture
                 .texture
                 .create_view(&wgpu::TextureViewDescriptor::default());
 
             let mut command_encoder =
-                wgpu_state
+                gpu_context
                     .device
                     .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                         label: Some("Render Pass Encoder"),
                     });
 
             {
-                let mut render_pass = command_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("Render Pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &texture_view,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color {
-                                r: 0.1,
-                                g: 0.2,
-                                b: 0.3,
-                                a: 1.0,
-                            }),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    occlusion_query_set: None,
-                    timestamp_writes: None,
-                });
+                let mut render_pass =
+                    command_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("Render Pass"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &texture_view,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color {
+                                    r: 0.1,
+                                    g: 0.2,
+                                    b: 0.3,
+                                    a: 1.0,
+                                }),
+                                store: wgpu::StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: None,
+                        occlusion_query_set: None,
+                        timestamp_writes: None,
+                    });
 
-                render_pass.set_pipeline(&wgpu_state.render_pipeline);
+                render_pass.set_pipeline(&gpu_context.render_pipeline);
                 render_pass.draw(0..3, 0..1);
 
-                text_engine.text_renderer.render(&text_engine.atlas, &text_engine.viewport, &mut render_pass).unwrap();
+                text_engine
+                    .text_renderer
+                    .render(&text_engine.atlas, &text_engine.viewport, &mut render_pass)
+                    .unwrap();
             }
 
-            wgpu_state
+            gpu_context
                 .queue
                 .submit(std::iter::once(command_encoder.finish()));
             surface_texture.present();
@@ -140,13 +134,13 @@ impl App {
     }
 
     fn resize_surface(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
-        if let AppState::Initialized { wgpu_state, .. } = &mut self.state {
-            wgpu_state.current_size = new_size;
-            wgpu_state.config.width = new_size.width;
-            wgpu_state.config.height = new_size.height;
-            wgpu_state
+        if let AppState::Initialized { gpu_context, .. } = &mut self.state {
+            gpu_context.current_size = new_size;
+            gpu_context.config.width = new_size.width;
+            gpu_context.config.height = new_size.height;
+            gpu_context
                 .surface
-                .configure(&wgpu_state.device, &wgpu_state.config);
+                .configure(&gpu_context.device, &gpu_context.config);
         }
     }
 }

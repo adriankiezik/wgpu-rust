@@ -1,6 +1,6 @@
 // #![windows_subsystem = "windows"]
-use winit::event_loop::{ControlFlow, EventLoop};
 use ferrite_engine::App;
+use winit::event_loop::{ControlFlow, EventLoop};
 
 fn main() {
     env_logger::init();
